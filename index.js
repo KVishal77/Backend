@@ -2,23 +2,20 @@ const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const QRCode = require('qrcode');
-require('dotenv').config();
-const { db } = require('./firebase');
+const { Readable } = require('stream');
 const OpenAI = require('openai');
+require('dotenv').config();
+
+const { db, bucket } = require('./firebase');
 
 const app = express();
-
-// ✅ Initialize OpenAI
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-});
-
 app.use(cors());
 app.use(express.json());
 
-// ✅ Configure file uploads (optional)
-const upload = multer({
-    storage: multer.memoryStorage(),
+const upload = multer({ storage: multer.memoryStorage() });
+
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
 });
 
 // ✅ AI Suggestion Route
@@ -27,7 +24,6 @@ app.post('/suggest', async (req, res) => {
 
     const prompt = `
 Return plant care data for "${plantName}" in this exact JSON format:
-
 {
   "scientific_name": "",
   "sunlight": "",
@@ -35,14 +31,12 @@ Return plant care data for "${plantName}" in this exact JSON format:
   "soil": "",
   "seasonality": "",
   "uses_notes": "",
-  "image": "<direct JPG or PNG URL of WHOLE PLANT from Wikimedia Commons (not fruit, not logo, not drawing)>"
+  "image": "<Wikimedia image URL>"
 }
-
 Rules:
 - Use only Wikimedia Commons images (not fruits or parts).
 - Avoid logos, icons, illustrations, or SVGs.
-- If you can't find a Wikimedia Commons image, leave the "image" field empty.
-- Return ONLY the JSON. No explanations or markdown.
+- Return ONLY the JSON. No markdown or explanation.
 `;
 
     try {
@@ -53,7 +47,6 @@ Rules:
 
         let content = completion.choices[0].message.content;
 
-        // ✅ Remove markdown formatting if present
         if (content.includes('```')) {
             content = content.replace(/```json|```/g, '').trim();
         }
@@ -62,23 +55,20 @@ Rules:
         try {
             suggestions = JSON.parse(content);
         } catch (err) {
-            console.error('❌ JSON Parse Error:', err.message);
-            return res.status(400).json({ error: 'Invalid JSON from OpenAI.' });
+            return res.status(400).json({ error: 'Invalid JSON from OpenAI' });
         }
 
-        // ✅ Fallback image if missing or invalid
+        // ✅ Validate/fallback image
         if (
             !suggestions.image ||
             !suggestions.image.includes('wikimedia') ||
             suggestions.image.endsWith('.svg')
         ) {
-            suggestions.image = 'https://upload.wikimedia.org/wikipedia/commons/thumb/f/fb/Plant_icon.svg/512px-Plant_icon.svg.png';
+            suggestions.image =
+                'https://upload.wikimedia.org/wikipedia/commons/thumb/f/fb/Plant_icon.svg/512px-Plant_icon.svg.png';
         }
 
-        // ✅ Attach original name
         suggestions.name = plantName;
-
-        // ✅ Send structured JSON back to frontend
         res.json({ suggestions });
     } catch (err) {
         console.error('❌ OpenAI Error:', err.message);
@@ -86,7 +76,69 @@ Rules:
     }
 });
 
-// ✅ Start Server
+// ✅ Upload Plant Route
+app.post('/addplant', upload.single('image'), async (req, res) => {
+    try {
+        const {
+            name,
+            scientific_name,
+            sunlight,
+            watering,
+            soil,
+            seasonality,
+            uses_notes,
+            userEmail,
+        } = req.body;
+
+        let imageUrl = '';
+        if (req.file) {
+            const blob = bucket.file(`plants/${Date.now()}_${req.file.originalname}`);
+            const blobStream = blob.createWriteStream({
+                metadata: { contentType: req.file.mimetype },
+            });
+
+            const readableStream = new Readable();
+            readableStream.push(req.file.buffer);
+            readableStream.push(null);
+            readableStream.pipe(blobStream);
+
+            await new Promise((resolve, reject) => {
+                blobStream.on('finish', resolve);
+                blobStream.on('error', reject);
+            });
+
+            imageUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(blob.name)}?alt=media`;
+        }
+
+        // ✅ Generate QR code
+        const plantData = {
+            name,
+            scientific_name,
+            sunlight,
+            watering,
+            soil,
+            seasonality,
+            uses_notes,
+            image: imageUrl,
+        };
+        const qrData = JSON.stringify(plantData);
+        const qrCodeUrl = await QRCode.toDataURL(qrData);
+
+        // ✅ Save to Firestore
+        await db
+            .collection('users')
+            .doc(userEmail)
+            .collection('plants')
+            .add({ ...plantData, qrCode: qrCodeUrl, createdAt: new Date() });
+
+        res.json({ success: true });
+    } catch (err) {
+        console.error('❌ Upload Error:', err.message);
+        res.status(500).json({ error: 'Upload Error' });
+    }
+});
+
+// ✅ Start server
 app.listen(5000, () => {
     console.log('✅ Backend running at http://localhost:5000');
 });
