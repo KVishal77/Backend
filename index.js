@@ -1,6 +1,5 @@
-// backend/index.js
 const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '.env') }); // load .env first
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const express = require('express');
 const cors = require('cors');
@@ -23,7 +22,7 @@ const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 });
 
-// ---- debug routes (helpful while testing)
+// ---- debug routes
 app.get('/health', (_req, res) => {
     res.json({
         ok: true,
@@ -44,7 +43,7 @@ app.get('/debug-env', (_req, res) => {
 app.get('/test-openai', async (_req, res) => {
     try {
         const r = await openai.chat.completions.create({
-            model: 'gpt-4o-mini', // safe + cheap; switch to 'gpt-4o' if your account allows
+            model: 'gpt-4o-mini',
             messages: [{ role: 'user', content: 'Reply with "OK".' }],
             temperature: 0,
         });
@@ -179,5 +178,5 @@ app.post('/addplant', upload.single('image'), async (req, res) => {
 
 // ---- start server
 app.listen(PORT, () => {
-    console.log(`✅ Backend running at http://localhost:${PORT}`);
+    console.log(` Backend running at http://localhost:${PORT}`);
 });
