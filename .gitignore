@@ -1,6 +1,14 @@
+# node
 node_modules/
+npm-debug.log
+yarn-error.log
+yarn-debug.log
+dist/
+build/
 .env
 .env.*
-*.env
-.env*
-firebase*.json
+uploads/
+.DS_Store
+.vscode/
+.idea/
+*.log
